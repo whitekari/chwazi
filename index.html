@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1b1640">
+<title>손가락 뽑기</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #1b1640;
+    touch-action: none;
+    user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  }
+  #hint {
+    position: fixed; inset: 0;
+    display: grid; place-items: center;
+    padding: 24px; text-align: center;
+    color: rgba(255,255,255,.6); font-size: 20px;
+    pointer-events: none; transition: opacity .3s;
+  }
+  #flood {
+    position: fixed; border-radius: 50%;
+    transform: scale(0); opacity: 0;
+    pointer-events: none;
+  }
+  #flood.on { transform: scale(1); opacity: 1; transition: transform .7s ease-out, opacity .2s; }
+  #flood.off { transition: opacity .4s; opacity: 0; transform: scale(1); }
+  .dot {
+    position: fixed; width: 100px; height: 100px;
+    margin: -50px 0 0 -50px; border-radius: 50%;
+    background: currentColor; pointer-events: none;
+    transform: scale(0); opacity: 1;
+    transition: transform .25s ease-out, opacity .25s, box-shadow .3s;
+  }
+  .dot.on { transform: scale(1); }
+  .dot::after {
+    content: ""; position: absolute; inset: -14px;
+    border-radius: 50%; border: 4px solid currentColor; opacity: .45;
+  }
+  body.waiting .dot::after { animation: breathe .6s ease-in-out infinite alternate; }
+  .dot.lose { transform: scale(0); opacity: 0; }
+  .dot.win { transform: scale(1.3); box-shadow: 0 0 0 8px #fff; }
+  .dot.win::after { display: none; }
+  @keyframes breathe { from { transform: scale(1); } to { transform: scale(1.25); } }
+  @media (prefers-reduced-motion: reduce) {
+    body.waiting .dot::after { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="flood"></div>
+<div id="hint">두 명 이상 손가락을 올려주세요</div>
+
+<script>
+  const hint = document.getElementById('hint');
+  const flood = document.getElementById('flood');
+  const dots = new Map();   // pointerId -> 원 요소
+  const down = new Set();   // 지금 화면에 닿아 있는 손가락
+  let state = 'idle';       // idle | done
+  let timer = null;
+  let colorIndex = 0;
+
+  function nextColor() {
+    const hue = (colorIndex++ * 137.5) % 360;  // 색이 겹치지 않게 골고루 분산
+    return `hsl(${hue}, 85%, 60%)`;
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    document.body.classList.remove('waiting');
+    hint.style.opacity = dots.size === 0 ? 1 : 0;
+    if (dots.size >= 2) {
+      void document.body.offsetWidth;          // 맥박 애니메이션 다시 시작
+      document.body.classList.add('waiting');
+      timer = setTimeout(pick, 3000);          // 3초 동안 변화 없으면 선택
+    }
+  }
+
+  function pick() {
+    state = 'done';
+    document.body.classList.remove('waiting');
+    const ids = [...dots.keys()];
+    const winnerId = ids[Math.floor(Math.random() * ids.length)];
+
+    ids.forEach(id => {
+      if (id === winnerId) return;
+      const el = dots.get(id);
+      el.classList.add('lose');
+      setTimeout(() => el.remove(), 300);
+      dots.delete(id);
+    });
+
+    const winner = dots.get(winnerId);
+    winner.classList.add('win');
+
+    const x = parseFloat(winner.style.left), y = parseFloat(winner.style.top);
+    const r = Math.hypot(innerWidth, innerHeight);
+    Object.assign(flood.style, {
+      width: r * 2 + 'px', height: r * 2 + 'px',
+      left: x - r + 'px', top: y - r + 'px',
+      background: winner.style.color
+    });
+    flood.className = '';
+    void flood.offsetWidth;
+    flood.className = 'on';
+
+    if (navigator.vibrate) navigator.vibrate(80);
+  }
+
+  function reset() {
+    flood.className = 'off';
+    dots.forEach(el => { el.classList.add('lose'); setTimeout(() => el.remove(), 300); });
+    dots.clear();
+    state = 'idle';
+    hint.style.opacity = 1;
+  }
+
+  addEventListener('pointerdown', e => {
+    e.preventDefault();
+    down.add(e.pointerId);
+    if (state === 'done') return;
+
+    const el = document.createElement('div');
+    el.className = 'dot';
+    el.style.color = nextColor();
+    el.style.left = e.clientX + 'px';
+    el.style.top = e.clientY + 'px';
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('on'));
+    dots.set(e.pointerId, el);
+    schedule();
+  }, { passive: false });
+
+  addEventListener('pointermove', e => {
+    const el = dots.get(e.pointerId);
+    if (!el) return;
+    el.style.left = e.clientX + 'px';
+    el.style.top = e.clientY + 'px';
+  });
+
+  function lift(e) {
+    down.delete(e.pointerId);
+    if (state === 'done') {
+      if (down.size === 0) reset();   // 모두 손을 떼면 다시 시작
+      return;
+    }
+    const el = dots.get(e.pointerId);
+    if (el) {
+      el.classList.add('lose');
+      setTimeout(() => el.remove(), 300);
+      dots.delete(e.pointerId);
+    }
+    schedule();
+  }
+  addEventListener('pointerup', lift);
+  addEventListener('pointercancel', lift);
+  addEventListener('contextmenu', e => e.preventDefault());
+</script>
+</body>
+</html>
